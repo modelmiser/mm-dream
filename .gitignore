@@ -1,0 +1,10 @@
+target/
+INSIGHTS.md
+DEVLOG.md
+TODO.md
+AUTHORING.md
+editorial_voice.md
+.claude/
+.crystal/
+.crystal-stem/
+.review/
