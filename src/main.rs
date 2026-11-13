@@ -17,7 +17,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 const DT: f32 = clock::DT as f32;
 // Scene timing in whole ticks (16 ms each), so the closing runs the opening's frames exactly backwards.
-const CYCLE_FRAMES: u32 = 563; // 9 s on each scene
+const CYCLE_FRAMES: u32 = 563; // 9 s on each bar scene
+const FIELD_FRAMES: u32 = 3 * CYCLE_FRAMES; // 27 s on the field: it is slow, and wants time
 const ZOOM_FRAMES: u32 = 563; // 9 s zoom in / out
 const DWELL_FRAMES: u32 = 125; // 2 s still after zoom-in and before zoom-out
 
@@ -87,6 +88,15 @@ const FOLD_NAMES: [&str; 4] = ["\u{2500}", "2-fold", "5-fold", "10-fold"];
 const FLUX_LIMIT: f32 = 10.0;
 
 impl App {
+    /// How long the current scene holds before the cycle moves on, in ticks.
+    fn scene_frames(&self) -> u32 {
+        if self.combo < NUM_COMBOS && SNAKE[self.combo].0 == FIELD_MODE {
+            FIELD_FRAMES
+        } else {
+            CYCLE_FRAMES
+        }
+    }
+
     fn advance_combo(&mut self) {
         // One line per combo, printed when it ends
         if self.flux_frames > 0 && self.combo < NUM_COMBOS {
@@ -257,7 +267,7 @@ impl Application for App {
                     Key::Next => {
                         // only from a settled scene: the cycle timer fires on the next tick
                         if self.zoom_state == ZoomState::Settled && !self.bars.transitioning() && self.blend == self.target {
-                            self.cycle_timer = CYCLE_FRAMES;
+                            self.cycle_timer = self.scene_frames();
                         }
                     }
                     Key::Crt => self.flags ^= CRT_OFF,
@@ -361,7 +371,7 @@ impl Application for App {
                                 self.cycle_timer = 0;
                             } else {
                                 self.cycle_timer += 1;
-                                if self.cycle_timer >= CYCLE_FRAMES {
+                                if self.cycle_timer >= self.scene_frames() {
                                     self.advance_combo();
                                     self.has_cycled = true;
                                     self.cycle_timer = 0;
