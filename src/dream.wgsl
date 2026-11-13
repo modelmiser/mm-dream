@@ -118,7 +118,7 @@ fn sample_bars(x_norm: f32, y_scan: f32, half: f32) -> vec3<f32> {
 }
 
 // ── Field source (0.2.0) ─────────────────────────────────────────────
-// One rotating, breathing lattice over a slow three-term plasma, through a three-phase sine palette shaded by the
+// One rotating, breathing lattice over a slow three-term plasma, coloured by the bars' palette and shaded by the
 // lattice. The float form of a 16-bit integer shader that runs on an FPGA tile array (one sine table of 128 steps;
 // every motion a frame count times its own rate). The rates below are those integers; the unit of length is 1/120
 // of the half-height, so the pattern is the same size at every resolution.
@@ -144,7 +144,12 @@ fn sample_field(p: vec2<f32>) -> vec3<f32> {
     let lat = (fsin(lu * 0.25) + fsin(lv * 0.25)) * 127.5;
     let shade = (128.0 + lat * 0.5) / 256.0;
     let i = pl + lat;
-    return vec3(fsin(i), fsin(i + 43.0), fsin(i + 85.0)) * shade;
+    // Palette: the bars' own ten colours, blended round the index (one sine-table period = once round the ramp).
+    // The ramp is mirrored (R O Y G B B G Y O R), so it closes on itself without a seam.
+    let ramp = fract(i / 128.0) * f32(NUM_BARS);
+    let k = u32(floor(ramp)) % NUM_BARS;
+    let col = mix(u.bar_colors[k].rgb, u.bar_colors[(k + 1u) % NUM_BARS].rgb, fract(ramp));
+    return col * shade;
 }
 
 // Apply kaleidoscope fold to square-space coordinates
