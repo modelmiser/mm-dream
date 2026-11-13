@@ -205,7 +205,7 @@ fn smoothstep_f(t: f32) -> f32 {
 
 impl V40Bars {
     /// Frame-to-frame visual change rate (updated each draw call).
-    /// Normalized: bar movement / bar_width × fold_count.
+    /// Raw bar movement in scanlines per frame (bars only: the field, the fold and the wobble are not measured).
     pub fn flux(&self) -> f32 {
         self.flux.get()
     }
@@ -453,7 +453,7 @@ fn compute_bars(t: &dyn Fn(f32) -> f32, n: usize, blend: f32, mode: u32) -> ([f3
                 let jitter =
                     amp * JITTER_INTENSITY * (dist * JITTER_FREQ_SPREAD + JITTER_FREQ_OFFSET) * mirror * t(jf[i]).sin();
                 let anim = breathed + wave + jitter;
-                positions[i] = anim + (home_pos - anim) * blend;
+                positions[i] = home_pos * blend + anim * (1.0 - blend); // exactly home at blend 1
             }
             // Wide bars, breath-driven
             bar_half_base * (WAVE_BAR_WIDTH_MAX - breath * WAVE_BAR_WIDTH_BREATH)
@@ -471,7 +471,7 @@ fn compute_bars(t: &dyn Fn(f32) -> f32, n: usize, blend: f32, mode: u32) -> ([f3
                 let anim = center
                     + amp * PLASMA_PRIMARY_AMP * (t(f1) + phase).sin()
                     + amp * PLASMA_SECONDARY_AMP * (t(f2) - phase).sin();
-                positions[i] = anim + (home_pos - anim) * blend;
+                positions[i] = home_pos * blend + anim * (1.0 - blend); // exactly home at blend 1
             }
             // Constant medium-wide bars (no breath pulsing)
             bar_half_base * PLASMA_BAR_WIDTH
@@ -491,7 +491,7 @@ fn compute_bars(t: &dyn Fn(f32) -> f32, n: usize, blend: f32, mode: u32) -> ([f3
                 let bounce = raw.abs();
                 let sharp = bounce * bounce;
                 let anim = home_pos + amp * BOUNCE_AMPLITUDE * mirror * sharp;
-                positions[i] = anim + (home_pos - anim) * blend;
+                positions[i] = home_pos * blend + anim * (1.0 - blend); // exactly home at blend 1
             }
             // Narrow bars — clear separation between bounces
             bar_half_base * BOUNCE_BAR_WIDTH
@@ -511,7 +511,7 @@ fn compute_bars(t: &dyn Fn(f32) -> f32, n: usize, blend: f32, mode: u32) -> ([f3
                 let phase = dist * CASCADE_PHASE_SPREAD * TAU;
                 let wave = (t(cascade_speed) - phase).sin();
                 let anim = home_pos + amp * CASCADE_AMPLITUDE * mirror * wave;
-                positions[i] = anim + (home_pos - anim) * blend;
+                positions[i] = home_pos * blend + anim * (1.0 - blend); // exactly home at blend 1
             }
             // Medium bars with slow breath
             bar_half_base * (CASCADE_BAR_WIDTH_BASE - breath * CASCADE_BAR_WIDTH_BREATH)

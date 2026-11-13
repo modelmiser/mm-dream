@@ -84,7 +84,7 @@ const BAR_NAMES: [&str; 5] = ["wave", "plasma", "bounce", "cascade", "field"];
 const FOLD_NAMES: [&str; 4] = ["\u{2500}", "2-fold", "5-fold", "10-fold"];
 
 // Maximum allowed flux — above this, animation auto-slows to prevent strobing.
-// Flux = sum(|bar_delta|) / bar_width × fold_count, measured per frame.
+// Flux = sum(|bar_delta|) in scanlines per frame; it measures the bars only.
 const FLUX_LIMIT: f32 = 10.0;
 
 impl App {
