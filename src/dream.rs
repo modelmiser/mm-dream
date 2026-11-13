@@ -372,12 +372,12 @@ impl<Message> shader::Program<Message> for V40Bars {
                 flags: self.flags as f32,
                 field_mix,
                 radial_phase: clock.rad(Rate::rad_per_sec(RADIAL_MIRROR_SPEED * speed)),
-                rot_turns: clock.turns(field_rate(29.0, speed)),
-                zoom_turns: clock.turns(field_rate(41.0, speed)),
+                rot_turns: clock.turns(field_rate(29.0)),
+                zoom_turns: clock.turns(field_rate(41.0)),
                 field_ph: [
-                    clock.turns(field_rate(128.0, speed)),
-                    clock.turns(field_rate(80.0, speed)),
-                    clock.turns(field_rate(104.0, speed)),
+                    clock.turns(field_rate(128.0)),
+                    clock.turns(field_rate(80.0)),
+                    clock.turns(field_rate(104.0)),
                     0.0,
                 ],
             },
@@ -388,9 +388,12 @@ impl<Message> shader::Program<Message> for V40Bars {
 // ── Shader-side motions, clocked here (0.2.0) ────────────────────────
 const WARP_RATE: f64 = std::f64::consts::PI * 1.618_033_988; // bar wobble, rad per second of shader time
 const RADIAL_MIRROR_SPEED: f64 = 0.3; // radial mirror threshold drift, rad per second of shader time
+/// The field's own pace, as a multiple of the FPGA original (60 frames a second). The bars' shader time runs at
+/// `speed` (1/3); through 0.2.0's first builds the field inherited that and ran at a third of its design speed.
+const FIELD_SPEED: f64 = 1.0;
 /// The field's motions are integers on an FPGA: k turns per 65536 frames at 60 frames a second.
-fn field_rate(k: f64, speed: f64) -> Rate {
-    Rate::turns_per_tick(k / 65536.0 * 60.0 * DT * speed)
+fn field_rate(k: f64) -> Rate {
+    Rate::turns_per_tick(k / 65536.0 * 60.0 * DT * FIELD_SPEED)
 }
 
 // ── Motion math (CPU — runs once per frame) ─────────────────────────
