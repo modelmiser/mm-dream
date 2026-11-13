@@ -28,11 +28,13 @@ pub struct Uniforms {
     pub fold_blend: f32,      // 0 = prev fold, 1 = current fold
     pub prev_fold_angle: f32, // prev mode's axis angle
     pub zoom_t: f32,          // 0 = fully zoomed (far), 1 = settled at screen
-    pub flags: f32, // bit 0: field source; bit 1: CRT off; bit 2: fold off
+    pub flags: f32,     // bit 1: CRT post-process off
+    pub field_mix: f32, // 0 = raster bars, 1 = the field scene
+    pub _pad: [f32; 3],
 }
 
-// Must be 272 bytes (17 × 16) to match WGSL struct layout.
-const _: () = assert!(std::mem::size_of::<Uniforms>() == 272);
+// Must be 288 bytes (18 × 16) to match WGSL struct layout.
+const _: () = assert!(std::mem::size_of::<Uniforms>() == 288);
 
 impl Uniforms {
     pub fn pack_positions(positions: &[f32; 10]) -> [[f32; 4]; 3] {

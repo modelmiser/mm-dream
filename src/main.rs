@@ -6,7 +6,7 @@ use std::time::Duration;
 
 mod dream;
 mod pipeline;
-use dream::{v40_bars, V40Bars, NUM_COMBOS, SNAKE};
+use dream::{v40_bars, V40Bars, FIELD_MODE, NUM_COMBOS, SNAKE};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = Settings::default().size_limits(Limits::NONE.min_width(400.0).min_height(300.0));
@@ -46,23 +46,19 @@ struct App {
     flux_sum: f32,
     flux_frames: u32,
     speed_factor: f32,
-    flags: u32,       // shader flags, see FIELD / CRT_OFF / FOLD_OFF
+    flags: u32,       // shader flags, see CRT_OFF
     fullscreen: bool, // current window mode
     fs_applied: bool, // the start-up fullscreen request has been sent
+    start_scene: Option<usize>, // --scene N: the first scene after the intro (1-based on the command line)
 }
 
 // Shader flags (0.2.0).
-const FIELD: u32 = 1; // the field source instead of the raster bars
 const CRT_OFF: u32 = 2; // no barrel, scanlines, grille or vignette: the picture reaches every edge
-const FOLD_OFF: u32 = 4; // no kaleidoscope fold
-/// The field starts as it was chosen: unmirrored, edge to edge. The bars start as in 0.1.
-const FIELD_DEFAULT: u32 = FIELD | CRT_OFF | FOLD_OFF;
 
 #[derive(Debug, Clone, Copy)]
 enum Key {
-    Source,     // s: bars <-> field
+    Next,       // n or space: on to the next scene of the supercycle now
     Crt,        // c: CRT post-process on/off
-    Mirrors,    // m: kaleidoscope fold on/off
     Fullscreen, // f: fullscreen <-> window
     Quit,       // q or Esc
 }
@@ -72,9 +68,8 @@ fn on_event(e: cosmic::iced::Event, _status: event::Status, _id: window::Id) -> 
         return None;
     };
     let k = match key.as_ref() {
-        keyboard::Key::Character("s") => Key::Source,
+        keyboard::Key::Character("n") | keyboard::Key::Character(" ") => Key::Next,
         keyboard::Key::Character("c") => Key::Crt,
-        keyboard::Key::Character("m") => Key::Mirrors,
         keyboard::Key::Character("f") => Key::Fullscreen,
         keyboard::Key::Character("q") | keyboard::Key::Named(keyboard::key::Named::Escape) => Key::Quit,
         _ => return None,
@@ -82,7 +77,7 @@ fn on_event(e: cosmic::iced::Event, _status: event::Status, _id: window::Id) -> 
     Some(Message::Key(k))
 }
 
-const BAR_NAMES: [&str; 4] = ["wave", "plasma", "bounce", "cascade"];
+const BAR_NAMES: [&str; 5] = ["wave", "plasma", "bounce", "cascade", "field"];
 const FOLD_NAMES: [&str; 4] = ["\u{2500}", "2-fold", "5-fold", "10-fold"];
 
 // Maximum allowed flux — above this, animation auto-slows to prevent strobing.
@@ -116,7 +111,11 @@ impl App {
         self.flux_sum = 0.0;
         self.flux_frames = 0;
 
-        let new_combo = (self.combo + 1) % (NUM_COMBOS + 1);
+        let new_combo = if self.combo == NUM_COMBOS {
+            self.start_scene.take().unwrap_or(0)
+        } else {
+            (self.combo + 1) % (NUM_COMBOS + 1)
+        };
         self.settle_secs = self.transition_cost(self.combo, new_combo);
 
         if new_combo == NUM_COMBOS {
@@ -142,8 +141,12 @@ impl App {
             return 1.0;
         }
 
-        let (_, old_rz) = SNAKE[old];
-        let (_, new_rz) = SNAKE[new];
+        let (old_bar, old_rz) = SNAKE[old];
+        let (new_bar, new_rz) = SNAKE[new];
+        // Bars <-> field: a crossfade between two different pictures; give it time
+        if (old_bar == FIELD_MODE) != (new_bar == FIELD_MODE) {
+            return 4.0;
+        }
         let old_fold = FOLD_COUNTS[old_rz as usize];
         let new_fold = FOLD_COUNTS[new_rz as usize];
 
@@ -198,7 +201,19 @@ impl Application for App {
         eprintln!("mm-dream \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500} zoom in \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
         eprintln!("       \u{2500}\u{2500}\u{2500} still \u{2500}\u{2500}\u{2500}");
         let mut bars = v40_bars(0.0).width(Length::Fill).height(Length::Fill);
-        bars.set_flags(FIELD_DEFAULT);
+        // Command line: --windowed (do not start fullscreen), --no-crt (start with the CRT post-process off),
+        // --scene N (start the supercycle at scene N of NUM_COMBOS; 17 is the field scene).
+        let args: Vec<String> = std::env::args().collect();
+        let windowed = args.iter().any(|a| a == "--windowed");
+        let flags = if args.iter().any(|a| a == "--no-crt") { CRT_OFF } else { 0 };
+        let start_scene = args
+            .iter()
+            .position(|a| a == "--scene")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|n| n.parse::<usize>().ok())
+            .filter(|n| (1..=NUM_COMBOS).contains(n))
+            .map(|n| n - 1);
+        bars.set_flags(flags);
         (
             App {
                 core,
@@ -215,9 +230,10 @@ impl Application for App {
                 flux_sum: 0.0,
                 flux_frames: 0,
                 speed_factor: 1.0,
-                flags: FIELD_DEFAULT,
-                fullscreen: true,
-                fs_applied: false,
+                flags,
+                fullscreen: !windowed,
+                fs_applied: windowed,
+                start_scene,
             },
             Task::none(),
         )
@@ -227,9 +243,13 @@ impl Application for App {
         match message {
             Message::Key(k) => {
                 match k {
-                    Key::Source => self.flags = if self.flags & FIELD != 0 { 0 } else { FIELD_DEFAULT },
+                    Key::Next => {
+                        // only from a settled scene: the cycle timer fires on the next tick
+                        if self.zoom_state == ZoomState::Settled && !self.bars.transitioning() && self.blend == self.target {
+                            self.cycle_timer = AUTO_CYCLE_SECS;
+                        }
+                    }
                     Key::Crt => self.flags ^= CRT_OFF,
-                    Key::Mirrors => self.flags ^= FOLD_OFF,
                     Key::Quit => return cosmic::iced::exit(),
                     Key::Fullscreen => {
                         self.fullscreen = !self.fullscreen;
@@ -270,9 +290,8 @@ impl Application for App {
                 } else {
                     self.speed_factor = self.speed_factor * 0.95 + target_factor * 0.05;
                 }
-                // The flux limiter measures the bars; the field has no bars and runs at its own fixed rates.
-                let speed = if self.flags & FIELD != 0 { 1.0 } else { self.speed_factor };
-                self.elapsed = (self.elapsed + DT * speed) % 10_000.0;
+                // (In the field scene the bars sit still, so the flux is 0 and the limiter releases to full speed.)
+                self.elapsed = (self.elapsed + DT * self.speed_factor) % 10_000.0;
 
                 // Zoom state machine — raw progress, eased before sending to GPU
                 match self.zoom_state {

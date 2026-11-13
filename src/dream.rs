@@ -35,10 +35,10 @@ const RAINBOW: [Color; 10] = [
 const SCANLINE_PX: f32 = 2.0;
 const NUM_BARS: usize = 10;
 
-const NUM_BAR_MODES: usize = 4;
-const NUM_ROTOZOOM_MODES: usize = 4;
-/// Total combo states (snake pattern through 4×4 grid).
-pub const NUM_COMBOS: usize = NUM_BAR_MODES * NUM_ROTOZOOM_MODES;
+/// Bar modes 0..3 move the raster bars; mode 4 is the field scene (0.2.0), which has no bars.
+pub const FIELD_MODE: u32 = 4;
+/// Total combo states: the snake through the 4×4 bar grid, then the field scene.
+pub const NUM_COMBOS: usize = 17;
 
 /// Snake pattern: each step changes only ONE of (bar, rotozoom).
 /// Bars cycle forward on even rows, backward on odd rows.
@@ -59,6 +59,9 @@ pub const SNAKE: [(u32, u32); NUM_COMBOS] = [
     (3, 2),
     (3, 1),
     (3, 0),
+    // 0.2.0: the field, unfolded. The snake ended on fold "none" and still does, so the closing
+    // (last scene -> still -> zoom out) stays the mirror of the opening.
+    (4, 0),
 ];
 
 // ── Natural constants (original mm-dream vocabulary) ────────────────
@@ -189,7 +192,7 @@ pub struct V40Bars {
     // Flux tracking — interior mutability because draw() takes &self
     prev_positions: Cell<[f32; 10]>,
     flux: Cell<f32>,
-    /// Shader flags: bit 0 field source, bit 1 CRT off, bit 2 fold off.
+    /// Shader flags: bit 1 CRT off.
     flags: u32,
 }
 
@@ -332,6 +335,15 @@ impl<Message> shader::Program<Message> for V40Bars {
         self.flux.set(bar_flux);
         self.prev_positions.set(positions);
 
+        // The field scene crossfades with the bars over the same transition that blends bar modes.
+        let is_field = |m: u32| if m == FIELD_MODE { 1.0_f32 } else { 0.0 };
+        let field_mix = if self.bar.active() {
+            let s = smoothstep_f(self.bar.progress);
+            is_field(self.bar.previous) + (is_field(self.bar.current) - is_field(self.bar.previous)) * s
+        } else {
+            is_field(self.bar.current)
+        };
+
         DreamPrimitive {
             uniforms: Uniforms {
                 bar_pos: Uniforms::pack_positions(&positions),
@@ -352,6 +364,8 @@ impl<Message> shader::Program<Message> for V40Bars {
                 prev_fold_angle,
                 zoom_t: self.zoom_t,
                 flags: self.flags as f32,
+                field_mix,
+                _pad: [0.0; 3],
             },
         }
     }

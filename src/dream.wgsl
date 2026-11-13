@@ -33,7 +33,11 @@ struct Uniforms {
     fold_blend: f32,
     prev_fold_angle: f32,
     zoom_t: f32,
-    flags: f32,     // bit 0: field source; bit 1: CRT post-process off; bit 2: fold off
+    flags: f32,     // bit 1: CRT post-process off
+    field_mix: f32, // 0 = raster bars, 1 = the field scene; between: crossfade
+    _pad1: f32,
+    _pad2: f32,
+    _pad3: f32,
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -174,12 +178,16 @@ fn fold_coords(sx: f32, sy: f32, fc: u32, angle: f32) -> vec2<f32> {
 // Sample bars through fold + counter-rotation pipeline. Returns screen-blended H+V color.
 fn sample_fold(sq: vec2<f32>, fc: u32, angle: f32, zoom: f32,
                aspect: f32, ica: f32, isa: f32) -> vec3<f32> {
-    let fl = u32(u.flags);
-    let f = fold_coords(sq.x, sq.y, select(fc, 0u, (fl & 4u) != 0u), angle);
-    if (fl & 1u) != 0u {
-        // the field is sampled once, in square space (no aspect squeeze), with the intro rotation
+    let f = fold_coords(sq.x, sq.y, fc, angle);
+    // The field scene is sampled once, in square space (no aspect squeeze), with the intro rotation. It replaces
+    // the bars (it is never screened over them: overlapping rainbows burn to white) and crossfades at scene changes.
+    var field = vec3(0.0);
+    if u.field_mix > 0.0 {
         let q = vec2(f.x * zoom, f.y * zoom);
-        return sample_field(vec2(q.x * ica - q.y * isa, q.x * isa + q.y * ica));
+        field = sample_field(vec2(q.x * ica - q.y * isa, q.x * isa + q.y * ica));
+        if u.field_mix >= 1.0 {
+            return field;
+        }
     }
     let s = vec2(f.x * zoom / aspect, f.y * zoom);
     let sh = vec2(s.x * ica - s.y * isa, s.x * isa + s.y * ica);
@@ -190,7 +198,8 @@ fn sample_fold(sq: vec2<f32>, fc: u32, angle: f32, zoom: f32,
     let xv = (sv.x + 1.0) * 0.5;
     let yv = (sv.y + 1.0) * 0.5 * u.n;
     let cv = sample_bars(yv / u.n, xv * u.n, u.bar_half);
-    return vec3(1.0) - (vec3(1.0) - ch) * (vec3(1.0) - cv);
+    let bars = vec3(1.0) - (vec3(1.0) - ch) * (vec3(1.0) - cv);
+    return mix(bars, field, u.field_mix);
 }
 
 @fragment
