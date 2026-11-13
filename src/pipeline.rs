@@ -15,7 +15,7 @@ pub struct Uniforms {
     pub bar_colors: [[f32; 4]; 10], // RGB + padding per bar
     pub bar_half: f32,
     pub blend: f32,
-    pub time: f32,
+    pub warp_phase: f32, // bar wobble phase, radians
     pub scale: f32, // display scale factor (physical px / logical px)
     pub n: f32,
     pub bounds_w: f32,
@@ -30,11 +30,14 @@ pub struct Uniforms {
     pub zoom_t: f32,          // 0 = fully zoomed (far), 1 = settled at screen
     pub flags: f32,     // bit 1: CRT post-process off
     pub field_mix: f32, // 0 = raster bars, 1 = the field scene
-    pub _pad: [f32; 3],
+    pub radial_phase: f32, // radial mirror drift phase, radians
+    pub rot_turns: f32,    // field: lattice rotation, turns
+    pub zoom_turns: f32,   // field: lattice zoom breathing, turns
+    pub field_ph: [f32; 4], // field: plasma phases, turns
 }
 
-// Must be 288 bytes (18 × 16) to match WGSL struct layout.
-const _: () = assert!(std::mem::size_of::<Uniforms>() == 288);
+// Must be 304 bytes (19 × 16) to match WGSL struct layout.
+const _: () = assert!(std::mem::size_of::<Uniforms>() == 304);
 
 impl Uniforms {
     pub fn pack_positions(positions: &[f32; 10]) -> [[f32; 4]; 3] {

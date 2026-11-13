@@ -5,6 +5,7 @@ use std::cell::Cell;
 use cosmic::iced::{Color, Length, Rectangle};
 use cosmic::iced_widget::shader;
 
+use crate::clock::{Clock, Rate, DT};
 use crate::pipeline::{DreamPrimitive, Uniforms};
 
 // ── Palette ──────────────────────────────────────────────────────────
@@ -162,9 +163,9 @@ impl Transition {
 
 // ── Public API ───────────────────────────────────────────────────────
 
-pub fn v40_bars(time: f32) -> V40Bars {
+pub fn v40_bars() -> V40Bars {
     V40Bars {
-        time,
+        clock: Clock::default(),
         blend: 1.0,
         speed: 1.0 / 3.0,
         zoom_t: 0.0,
@@ -180,7 +181,7 @@ pub fn v40_bars(time: f32) -> V40Bars {
 }
 
 pub struct V40Bars {
-    time: f32,
+    clock: Clock,
     blend: f32,
     speed: f32,
     zoom_t: f32,
@@ -212,8 +213,8 @@ impl V40Bars {
         self.flags = flags;
     }
 
-    pub fn set_time(&mut self, t: f32) {
-        self.time = t;
+    pub fn set_clock(&mut self, c: Clock) {
+        self.clock = c;
     }
 
     pub fn set_blend(&mut self, b: f32) {
@@ -282,7 +283,12 @@ impl<Message> shader::Program<Message> for V40Bars {
         _cursor: cosmic::iced::mouse::Cursor,
         bounds: Rectangle,
     ) -> Self::Primitive {
-        let t = self.time * self.speed;
+        // Every periodic motion reads its phase off the integer clock: `ph(w)` is what `t * w` was (t = seconds ×
+        // speed), reduced mod 2π exactly. See clock.rs.
+        let clock = self.clock;
+        let speed = f64::from(self.speed);
+        let ph = move |w: f32| clock.rad(Rate::rad_per_sec(f64::from(w) * speed));
+        let t = &ph;
         let n = (bounds.height / SCANLINE_PX).max(1.0);
 
         let (pos_curr, half_curr) = compute_bars(t, n as usize, self.blend, self.bar.current);
@@ -350,7 +356,7 @@ impl<Message> shader::Program<Message> for V40Bars {
                 bar_colors,
                 bar_half,
                 blend: self.blend,
-                time: t,
+                warp_phase: clock.rad(Rate::rad_per_sec(WARP_RATE * speed)),
                 scale: 1.0, // overwritten in prepare() with viewport scale factor
                 n,
                 bounds_w: bounds.width,
@@ -365,10 +371,26 @@ impl<Message> shader::Program<Message> for V40Bars {
                 zoom_t: self.zoom_t,
                 flags: self.flags as f32,
                 field_mix,
-                _pad: [0.0; 3],
+                radial_phase: clock.rad(Rate::rad_per_sec(RADIAL_MIRROR_SPEED * speed)),
+                rot_turns: clock.turns(field_rate(29.0, speed)),
+                zoom_turns: clock.turns(field_rate(41.0, speed)),
+                field_ph: [
+                    clock.turns(field_rate(128.0, speed)),
+                    clock.turns(field_rate(80.0, speed)),
+                    clock.turns(field_rate(104.0, speed)),
+                    0.0,
+                ],
             },
         }
     }
+}
+
+// ── Shader-side motions, clocked here (0.2.0) ────────────────────────
+const WARP_RATE: f64 = std::f64::consts::PI * 1.618_033_988; // bar wobble, rad per second of shader time
+const RADIAL_MIRROR_SPEED: f64 = 0.3; // radial mirror threshold drift, rad per second of shader time
+/// The field's motions are integers on an FPGA: k turns per 65536 frames at 60 frames a second.
+fn field_rate(k: f64, speed: f64) -> Rate {
+    Rate::turns_per_tick(k / 65536.0 * 60.0 * DT * speed)
 }
 
 // ── Motion math (CPU — runs once per frame) ─────────────────────────
@@ -380,7 +402,7 @@ impl<Message> shader::Program<Message> for V40Bars {
 //   Cascade — fluid, traveling wave, smooth propagation, medium width
 
 #[allow(clippy::needless_range_loop)]
-fn compute_bars(t: f32, n: usize, blend: f32, mode: u32) -> ([f32; 10], f32) {
+fn compute_bars(t: &dyn Fn(f32) -> f32, n: usize, blend: f32, mode: u32) -> ([f32; 10], f32) {
     use std::f32::consts::TAU;
 
     let bar_half_base = (n as f32 / 16.0).max(4.0);
@@ -398,7 +420,7 @@ fn compute_bars(t: f32, n: usize, blend: f32, mode: u32) -> ([f32; 10], f32) {
     let bar_half = match mode {
         0 => {
             // Wave — oceanic, slow breath, wide overlapping bars
-            let breath = (t * omega).sin() * 0.5 + 0.5;
+            let breath = t(omega).sin() * 0.5 + 0.5;
             let amp = base_amp;
             let spread = WAVE_SPREAD_MIN + breath * (WAVE_SPREAD_MAX - WAVE_SPREAD_MIN);
             let wave_freq = omega * 4.0 / 3.0;
@@ -423,9 +445,9 @@ fn compute_bars(t: f32, n: usize, blend: f32, mode: u32) -> ([f32; 10], f32) {
                     * WAVE_DISPLACEMENT
                     * (dist * WAVE_COUPLING + WAVE_PHASE_OFFSET)
                     * mirror
-                    * (t * wave_freq).sin();
+                    * t(wave_freq).sin();
                 let jitter =
-                    amp * JITTER_INTENSITY * (dist * JITTER_FREQ_SPREAD + JITTER_FREQ_OFFSET) * mirror * (jf[i] * t).sin();
+                    amp * JITTER_INTENSITY * (dist * JITTER_FREQ_SPREAD + JITTER_FREQ_OFFSET) * mirror * t(jf[i]).sin();
                 let anim = breathed + wave + jitter;
                 positions[i] = anim + (home_pos - anim) * blend;
             }
@@ -443,8 +465,8 @@ fn compute_bars(t: f32, n: usize, blend: f32, mode: u32) -> ([f32; 10], f32) {
                 let f2 = omega * (PLASMA_SECONDARY_FREQ + i as f32 * PLASMA_SECONDARY_STEP);
                 let phase = i as f32 * TAU * PLASMA_PHASE_SPREAD;
                 let anim = center
-                    + amp * PLASMA_PRIMARY_AMP * (t * f1 + phase).sin()
-                    + amp * PLASMA_SECONDARY_AMP * (t * f2 - phase).sin();
+                    + amp * PLASMA_PRIMARY_AMP * (t(f1) + phase).sin()
+                    + amp * PLASMA_SECONDARY_AMP * (t(f2) - phase).sin();
                 positions[i] = anim + (home_pos - anim) * blend;
             }
             // Constant medium-wide bars (no breath pulsing)
@@ -460,7 +482,7 @@ fn compute_bars(t: f32, n: usize, blend: f32, mode: u32) -> ([f32; 10], f32) {
                 let mirror = if (i as f32) < mid { -1.0_f32 } else { 1.0 };
                 // Staggered phase — bars bounce in sequence
                 let phase = i as f32 * BOUNCE_PHASE_SPREAD * TAU;
-                let raw = (t * bounce_speed + phase).sin();
+                let raw = (t(bounce_speed) + phase).sin();
                 // abs + quadratic: fast snap at bounce points, slow at peak
                 let bounce = raw.abs();
                 let sharp = bounce * bounce;
@@ -476,14 +498,14 @@ fn compute_bars(t: f32, n: usize, blend: f32, mode: u32) -> ([f32; 10], f32) {
             let amp = base_amp * 2.0;
             let cascade_speed = omega * CASCADE_SPEED;
             // Slow gentle breath (half rate)
-            let breath = (t * omega * 0.5).sin() * 0.5 + 0.5;
+            let breath = t(omega * 0.5).sin() * 0.5 + 0.5;
             for i in 0..NUM_BARS {
                 let home_pos = home_start + i as f32 * band_h + band_h / 2.0;
                 let dist = (i as f32 - mid).abs();
                 let mirror = if (i as f32) < mid { -1.0_f32 } else { 1.0 };
                 // Phase delay proportional to distance from center — visible propagation
                 let phase = dist * CASCADE_PHASE_SPREAD * TAU;
-                let wave = (t * cascade_speed - phase).sin();
+                let wave = (t(cascade_speed) - phase).sin();
                 let anim = home_pos + amp * CASCADE_AMPLITUDE * mirror * wave;
                 positions[i] = anim + (home_pos - anim) * blend;
             }
@@ -516,17 +538,17 @@ fn compute_bars(t: f32, n: usize, blend: f32, mode: u32) -> ([f32; 10], f32) {
 // Mode 3: 10-fold — decagonal, one fold per bar, slow zoom pulse
 
 /// Returns (fold_angle, zoom, fold_count).
-fn compute_rotozoom(t: f32, mode: u32) -> (f32, f32, u32) {
+fn compute_rotozoom(t: &dyn Fn(f32) -> f32, mode: u32) -> (f32, f32, u32) {
     use std::f32::consts::TAU;
     let omega = TAU / 2.0;
 
     match mode {
         0 => (0.0, 1.0, 0),
-        1 => (t * DRIFT_2FOLD, 1.0, 2),
-        2 => (t * DRIFT_5FOLD, 1.0, 5),
+        1 => (t(DRIFT_2FOLD), 1.0, 2),
+        2 => (t(DRIFT_5FOLD), 1.0, 5),
         3 => (
-            t * DRIFT_10FOLD,
-            1.0 + ZOOM_PULSE_DEPTH * (t * omega * ZOOM_PULSE_RATE).sin(),
+            t(DRIFT_10FOLD),
+            1.0 + ZOOM_PULSE_DEPTH * t(omega * ZOOM_PULSE_RATE).sin(),
             10,
         ),
         _ => (0.0, 1.0, 0),

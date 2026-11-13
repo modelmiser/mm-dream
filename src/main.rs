@@ -4,6 +4,7 @@ use cosmic::iced_widget::shader;
 use cosmic::{executor, Application, ApplicationExt, Element};
 use std::time::Duration;
 
+mod clock;
 mod dream;
 mod pipeline;
 use dream::{v40_bars, V40Bars, FIELD_MODE, NUM_COMBOS, SNAKE};
@@ -14,10 +15,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-const DT: f32 = 0.016;
-const AUTO_CYCLE_SECS: f32 = 9.0;
-const ZOOM_SECS: f32 = 9.0; // duration of zoom in/out
-const ZOOM_DWELL: f32 = 2.0; // static dwell after zoom-in and before zoom-out
+const DT: f32 = clock::DT as f32;
+// Scene timing in whole ticks (16 ms each), so the closing runs the opening's frames exactly backwards.
+const CYCLE_FRAMES: u32 = 563; // 9 s on each scene
+const ZOOM_FRAMES: u32 = 563; // 9 s zoom in / out
+const DWELL_FRAMES: u32 = 125; // 2 s still after zoom-in and before zoom-out
 
 // Fold counts for rotozoom modes 0..3
 const FOLD_COUNTS: [u32; 4] = [0, 2, 5, 10];
@@ -35,11 +37,11 @@ struct App {
     core: Core,
     blend: f32,
     target: f32,
-    elapsed: f32,
+    clock: clock::Clock, // the animation clock (integer ticks; see clock.rs)
     combo: usize,
-    cycle_timer: f32,
+    cycle_timer: u32, // ticks spent in the current scene or dwell
     settle_secs: f32,
-    zoom_t: f32, // 0 = far away, 1 = at screen
+    zoom_frame: u32, // 0 = far away, ZOOM_FRAMES = at screen
     zoom_state: ZoomState,
     has_cycled: bool, // true after first combo advance (prevents immediate zoom-out)
     bars: V40Bars,
@@ -124,8 +126,13 @@ impl App {
             self.bars.step_to(0, 0);
         } else if self.combo == NUM_COMBOS {
             let (bar, rz) = SNAKE[new_combo];
-            self.bars.set_mode(bar);
-            self.bars.start_rz_transition(rz);
+            if bar == FIELD_MODE {
+                // from the still straight to the field (--scene 17): crossfade, do not cut
+                self.bars.step_to(bar, rz);
+            } else {
+                self.bars.set_mode(bar);
+                self.bars.start_rz_transition(rz);
+            }
             self.target = 0.0;
         } else {
             let (bar, rz) = SNAKE[new_combo];
@@ -200,7 +207,7 @@ impl Application for App {
         core.window.show_headerbar = false;
         eprintln!("mm-dream \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500} zoom in \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
         eprintln!("       \u{2500}\u{2500}\u{2500} still \u{2500}\u{2500}\u{2500}");
-        let mut bars = v40_bars(0.0).width(Length::Fill).height(Length::Fill);
+        let mut bars = v40_bars().width(Length::Fill).height(Length::Fill);
         // Command line: --windowed (do not start fullscreen), --no-crt (start with the CRT post-process off),
         // --scene N (start the supercycle at scene N of NUM_COMBOS; 17 is the field scene).
         let args: Vec<String> = std::env::args().collect();
@@ -219,11 +226,11 @@ impl Application for App {
                 core,
                 blend: 1.0,
                 target: 1.0,
-                elapsed: 0.0,
+                clock: clock::Clock::default(),
                 combo: NUM_COMBOS,
-                cycle_timer: 0.0,
+                cycle_timer: 0,
                 settle_secs: 1.0,
-                zoom_t: 0.0,
+                zoom_frame: 0,
                 zoom_state: ZoomState::In,
                 has_cycled: false,
                 bars,
@@ -246,7 +253,7 @@ impl Application for App {
                     Key::Next => {
                         // only from a settled scene: the cycle timer fires on the next tick
                         if self.zoom_state == ZoomState::Settled && !self.bars.transitioning() && self.blend == self.target {
-                            self.cycle_timer = AUTO_CYCLE_SECS;
+                            self.cycle_timer = CYCLE_FRAMES;
                         }
                     }
                     Key::Crt => self.flags ^= CRT_OFF,
@@ -291,35 +298,35 @@ impl Application for App {
                     self.speed_factor = self.speed_factor * 0.95 + target_factor * 0.05;
                 }
                 // (In the field scene the bars sit still, so the flux is 0 and the limiter releases to full speed.)
-                self.elapsed = (self.elapsed + DT * self.speed_factor) % 10_000.0;
+                self.clock.advance(self.speed_factor);
 
                 // Zoom state machine — raw progress, eased before sending to GPU
                 match self.zoom_state {
                     ZoomState::In => {
-                        self.zoom_t = (self.zoom_t + DT / ZOOM_SECS).min(1.0);
-                        if self.zoom_t >= 1.0 {
+                        self.zoom_frame = (self.zoom_frame + 1).min(ZOOM_FRAMES);
+                        if self.zoom_frame == ZOOM_FRAMES {
                             self.zoom_state = ZoomState::DwellIn;
-                            self.cycle_timer = 0.0;
+                            self.cycle_timer = 0;
                         }
                     }
                     ZoomState::DwellIn => {
-                        self.cycle_timer += DT;
-                        if self.cycle_timer >= ZOOM_DWELL {
+                        self.cycle_timer += 1;
+                        if self.cycle_timer >= DWELL_FRAMES {
                             self.zoom_state = ZoomState::Settled;
                             // Pre-load timer so first advance fires immediately
-                            self.cycle_timer = AUTO_CYCLE_SECS;
+                            self.cycle_timer = CYCLE_FRAMES;
                         }
                     }
                     ZoomState::DwellOut => {
-                        self.cycle_timer += DT;
-                        if self.cycle_timer >= ZOOM_DWELL {
+                        self.cycle_timer += 1;
+                        if self.cycle_timer >= DWELL_FRAMES {
                             self.zoom_state = ZoomState::Out;
                             eprintln!("mm-dream \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500} zoom out \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
                         }
                     }
                     ZoomState::Out => {
-                        self.zoom_t = (self.zoom_t - DT / ZOOM_SECS).max(0.0);
-                        if self.zoom_t <= 0.0 {
+                        self.zoom_frame = self.zoom_frame.saturating_sub(1);
+                        if self.zoom_frame == 0 {
                             self.zoom_state = ZoomState::In;
                             self.combo = NUM_COMBOS;
                             self.blend = 1.0;
@@ -347,13 +354,13 @@ impl Application for App {
                                 eprintln!("       \u{2500}\u{2500}\u{2500} still \u{2500}\u{2500}\u{2500}");
                                 self.zoom_state = ZoomState::DwellOut;
                                 self.has_cycled = false;
-                                self.cycle_timer = 0.0;
+                                self.cycle_timer = 0;
                             } else {
-                                self.cycle_timer += DT;
-                                if self.cycle_timer >= AUTO_CYCLE_SECS {
+                                self.cycle_timer += 1;
+                                if self.cycle_timer >= CYCLE_FRAMES {
                                     self.advance_combo();
                                     self.has_cycled = true;
-                                    self.cycle_timer = 0.0;
+                                    self.cycle_timer = 0;
                                 }
                             }
                         }
@@ -361,10 +368,10 @@ impl Application for App {
                 }
             }
         }
-        self.bars.set_time(self.elapsed);
+        self.bars.set_clock(self.clock);
         self.bars.set_blend(smoothstep(self.blend));
         // Ease-out in both directions: fast at far end, slow near screen
-        let eased_zoom = smoothstep(self.zoom_t);
+        let eased_zoom = smoothstep(self.zoom_frame as f32 / ZOOM_FRAMES as f32);
         self.bars.set_zoom_t(eased_zoom);
         if !self.fs_applied {
             if let Some(id) = self.core().main_window_id() {

@@ -13,14 +13,13 @@ const SCANLINE_PX: f32 = 2.0;
 const WARP_AMPLITUDE: f32 = FRAC_1_SQRT2;  // x-axis bar wobble during transitions
 const RADIAL_MIRROR_CENTER: f32 = 0.4;     // fold_coords radial mirror threshold base
 const RADIAL_MIRROR_DRIFT: f32 = 0.2;      // how much the mirror threshold oscillates
-const RADIAL_MIRROR_SPEED: f32 = 0.3;      // oscillation rate of the radial threshold
 
 struct Uniforms {
     bar_pos: array<vec4<f32>, 3>,
     bar_colors: array<vec4<f32>, 10>,
     bar_half: f32,
     blend: f32,
-    time: f32,
+    warp_phase: f32,    // bar wobble phase, radians (was time * pi * phi, in the shader)
     scale: f32,
     n: f32,
     bounds_w: f32,
@@ -35,9 +34,10 @@ struct Uniforms {
     zoom_t: f32,
     flags: f32,     // bit 1: CRT post-process off
     field_mix: f32, // 0 = raster bars, 1 = the field scene; between: crossfade
-    _pad1: f32,
-    _pad2: f32,
-    _pad3: f32,
+    radial_phase: f32,  // radial mirror drift phase, radians
+    rot_turns: f32,     // field: lattice rotation, turns
+    zoom_turns: f32,    // field: lattice zoom breathing, turns
+    field_ph: vec4<f32>, // field: plasma phases (horizontal, vertical, radial), turns
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -75,9 +75,8 @@ fn get_bar_pos(i: u32) -> f32 {
 
 // Sample bar pattern at given source coordinates. Returns pre-CRT linear color.
 fn sample_bars(x_norm: f32, y_scan: f32, half: f32) -> vec3<f32> {
-    let omega = PI;
     let mid = f32(NUM_BARS - 1u) / 2.0;
-    let warp_time = u.time * omega * PHI;
+    let warp_time = u.warp_phase;
     let warp_spatial = x_norm * TAU * PHI;
 
     var max_i: f32 = 0.0;
@@ -124,22 +123,20 @@ fn sample_bars(x_norm: f32, y_scan: f32, half: f32) -> vec3<f32> {
 // every motion a frame count times its own rate). The rates below are those integers; the unit of length is 1/120
 // of the half-height, so the pattern is the same size at every resolution.
 const FIELD_UNITS: f32 = 120.0;
-const FIELD_FPS: f32 = 60.0;
 
 fn fsin(q: f32) -> f32 {
     return 0.5 + 0.5 * sin(q * TAU / 128.0);
 }
 
 fn sample_field(p: vec2<f32>) -> vec3<f32> {
-    let t = u.time * FIELD_FPS;
     let dx = p.x * FIELD_UNITS;
     let dy = p.y * FIELD_UNITS;
-    // plasma: horizontal, vertical and radial terms at rates 128, 80, 104 (per 512 frames, one table step)
+    // plasma: horizontal, vertical and radial terms; their phases (rates 128, 80, 104 per 65536 field frames) and the
+    // lattice's (29, 41) come from the CPU's integer clock, one sine-table period (128 units) per turn
     let rr = (dx * dx + dy * dy) / 64.0;
-    let pl = (fsin(dx + t * 0.25) + fsin(dy + t * 0.15625) + fsin(rr - t * 0.203125)) * 63.75;
-    // lattice: rotation at rate 29, zoom breathing at rate 41 (turns per 65536 frames)
-    let ang = t * (29.0 / 65536.0) * TAU;
-    let zoom = (896.0 + 510.0 + 510.0 * sin(t * (41.0 / 65536.0) * TAU)) * (2040.0 / 16384.0);
+    let pl = (fsin(dx + 128.0 * u.field_ph.x) + fsin(dy + 128.0 * u.field_ph.y) + fsin(rr - 128.0 * u.field_ph.z)) * 63.75;
+    let ang = u.rot_turns * TAU;
+    let zoom = (896.0 + 510.0 + 510.0 * sin(u.zoom_turns * TAU)) * (2040.0 / 16384.0);
     let c = zoom * cos(ang);
     let s = zoom * sin(ang);
     let lu = (dx * c - dy * s) / 128.0;
@@ -169,7 +166,7 @@ fn fold_coords(sx: f32, sy: f32, fc: u32, angle: f32) -> vec2<f32> {
     t_folded = t_folded + angle;
 
     // 2nd order: radial mirror → mandala rings
-    let r_threshold = RADIAL_MIRROR_CENTER + RADIAL_MIRROR_DRIFT * sin(u.time * RADIAL_MIRROR_SPEED);
+    let r_threshold = RADIAL_MIRROR_CENTER + RADIAL_MIRROR_DRIFT * sin(u.radial_phase);
     var folded_r = abs(r - r_threshold) + r_threshold * 0.5;
 
     return vec2(folded_r * cos(t_folded), folded_r * sin(t_folded));
