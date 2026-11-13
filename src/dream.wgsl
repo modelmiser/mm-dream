@@ -194,10 +194,20 @@ fn sample_fold(sq: vec2<f32>, fc: u32, angle: f32, zoom: f32,
     let sv = vec2(s.x * ica + s.y * isa, -s.x * isa + s.y * ica);
     let xh = (sh.x + 1.0) * 0.5;
     let yh = (sh.y + 1.0) * 0.5 * u.n;
-    let ch = sample_bars(xh, yh, u.bar_half);
+    var ch = sample_bars(xh, yh, u.bar_half);
     let xv = (sv.x + 1.0) * 0.5;
     let yv = (sv.y + 1.0) * 0.5 * u.n;
-    let cv = sample_bars(yv / u.n, xv * u.n, u.bar_half);
+    var cv = sample_bars(yv / u.n, xv * u.n, u.bar_half);
+    // While the picture turns (the zoom in and out), each pass turns BOTH ways and the brighter copy wins.
+    // With one copy each (0.1), H turned one way and V the other: every frame kept its half turn and its
+    // corner-to-corner mirror but lost left-right and top-bottom. The mirrored copy of the H pass is the V pass's
+    // rotation and vice versa, so no new trigonometry; at rest the copies coincide and are skipped.
+    if abs(isa) > 1e-6 {
+        let ch2 = sample_bars(xv, yv, u.bar_half);
+        let cv2 = sample_bars(yh / u.n, xh * u.n, u.bar_half);
+        ch = max(ch, ch2);
+        cv = max(cv, cv2);
+    }
     let bars = vec3(1.0) - (vec3(1.0) - ch) * (vec3(1.0) - cv);
     return mix(bars, field, u.field_mix);
 }
