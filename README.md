@@ -74,8 +74,8 @@ Not exact, by design:
 ## Changes in 0.2.0
 
 - New scene: the field, first in the cycle, coloured from the bar palette.
-- The fold is symmetric with the CRT barrel on. In 0.1 the barrel distortion was elliptical on a non-square
-  screen and put mirrored sectors 30 to 33 pixels apart at 4K.
+- The CRT barrel no longer breaks the fold's symmetry. In 0.1 the barrel distortion was elliptical on a
+  non-square screen and put mirrored sectors 30 to 33 pixels apart at 4K.
 - The zoom in and out are mirror-symmetric. In 0.1 they had only a half turn and a corner-to-corner mirror.
 - An integer clock replaces the `f32` seconds that were wrapped every 10,000 s of animation time (a visible
   jump every 2.8 hours at full speed).
