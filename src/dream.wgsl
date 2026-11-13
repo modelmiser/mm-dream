@@ -213,7 +213,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let r2 = raw_dx * raw_dx + raw_dy * raw_dy;  // vignette uses screen-space radius
     let aspect = u.bounds_w / u.bounds_h;
 
-    let inv_barrel = 1.0 + k * r2;
+    // The barrel bends the coordinates the fold then mirrors, so its radius must be the TRUE (square-pixel) radius:
+    // with the per-axis radius above, the bend is elliptical on a non-square screen and the fold's sectors stop
+    // matching (0.1: up to 33 px at 4K). Scaled so the corners bend exactly as before.
+    let r2_true = (raw_dx * raw_dx * aspect * aspect + raw_dy * raw_dy) * 2.0 / (aspect * aspect + 1.0);
+    let inv_barrel = 1.0 + k * r2_true;
     let ix = dx * inv_barrel;
     let iy = dy * inv_barrel;
 
