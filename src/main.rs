@@ -137,7 +137,7 @@ impl App {
         } else if self.combo == NUM_COMBOS {
             let (bar, rz) = SNAKE[new_combo];
             if bar == FIELD_MODE {
-                // from the still straight to the field (--scene 17): crossfade, do not cut
+                // from the still straight to the field (--scene 1): crossfade, do not cut
                 self.bars.step_to(bar, rz);
             } else {
                 self.bars.set_mode(bar);
@@ -151,7 +151,7 @@ impl App {
         self.combo = new_combo;
     }
 
-    /// Visual distance → transition duration (0.33s for smooth, up to 3.0s for jarring).
+    /// Visual distance → transition duration (1 s to and from the stills, up to 6 s for the most jarring).
     fn transition_cost(&self, old: usize, new: usize) -> f32 {
         // From the opening still into the field (slot 0): a crossfade between two pictures, not an unfreezing
         if old == NUM_COMBOS && new < NUM_COMBOS && SNAKE[new].0 == FIELD_MODE {

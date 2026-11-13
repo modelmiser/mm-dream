@@ -178,14 +178,16 @@ fn fold_coords(sx: f32, sy: f32, fc: u32, angle: f32) -> vec2<f32> {
 }
 
 // Sample bars through fold + counter-rotation pipeline. Returns screen-blended H+V color.
-fn sample_fold(sq: vec2<f32>, fc: u32, angle: f32, zoom: f32,
+// `sq_true` is the same point bent on the true radius: the field is built in square pixels whatever the fold.
+fn sample_fold(sq: vec2<f32>, sq_true: vec2<f32>, fc: u32, angle: f32, zoom: f32,
                aspect: f32, ica: f32, isa: f32) -> vec3<f32> {
     let f = fold_coords(sq.x, sq.y, fc, angle);
     // The field scene is sampled once, in square space (no aspect squeeze), with the intro rotation. It replaces
     // the bars (it is never screened over them: overlapping rainbows burn to white) and crossfades at scene changes.
     var field = vec3(0.0);
     if u.field_mix > 0.0 {
-        let q = vec2(f.x * zoom, f.y * zoom);
+        let ff = fold_coords(sq_true.x, sq_true.y, fc, angle);
+        let q = vec2(ff.x * zoom, ff.y * zoom);
         field = sample_field(vec2(q.x * ica - q.y * isa, q.x * isa + q.y * ica));
         if u.field_mix >= 1.0 {
             return field;
@@ -240,6 +242,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     //  - A FOLDED scene is built in square pixels: its sectors match only if the bend uses the true radius
     //    (0.1 used the per-axis radius there too: sectors off by up to 33 px at 4K).
     // So each fold count gets the radius its scene is built in; a fold crossfade mixes two exact pictures.
+    // The field is built in square pixels even when unfolded, so it always takes the true radius (sq_true).
     // Both are scaled to bend the corners equally.
     let r2_true = (raw_dx * raw_dx * aspect * aspect + raw_dy * raw_dy) * 2.0 / (aspect * aspect + 1.0);
     let b_curr = 1.0 + k * select(r2_true, r2, u.fold_count == 0u);
@@ -247,13 +250,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Fold + zoom — sample both current and previous fold, crossfade
     let sq = vec2(dx * b_curr * aspect, dy * b_curr);
+    let b_true = 1.0 + k * r2_true;
+    let sq_true = vec2(dx * b_true * aspect, dy * b_true);
 
-    let curr = sample_fold(sq, u.fold_count, u.fold_angle, u.fold_zoom, aspect, ica, isa);
+    let curr = sample_fold(sq, sq_true, u.fold_count, u.fold_angle, u.fold_zoom, aspect, ica, isa);
 
     var color: vec3<f32>;
     if u.fold_blend < 1.0 {
         let sq_prev = vec2(dx * b_prev * aspect, dy * b_prev);
-        let prev = sample_fold(sq_prev, u.prev_fold_count, u.prev_fold_angle, u.fold_zoom, aspect, ica, isa);
+        let prev = sample_fold(sq_prev, sq_true, u.prev_fold_count, u.prev_fold_angle, u.fold_zoom, aspect, ica, isa);
         color = mix(prev, curr, u.fold_blend);
     } else {
         color = curr;

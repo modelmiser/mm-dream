@@ -45,7 +45,7 @@ pub const NUM_COMBOS: usize = 17;
 ///
 /// Slot 0 is the field, unfolded: the cycle opens on it, straight out of the opening still. Then 0.1's snake
 /// through the 4×4 bar grid: each step changes only ONE of (bar, rotozoom); bars cycle forward on even rows,
-/// backward on odd rows. It ends on (cascade, no fold), so the closing still mirrors the opening.
+/// backward on odd rows. It ends on (cascade, no fold): unfolded, like the scene the cycle opened on.
 pub const SNAKE: [(u32, u32); NUM_COMBOS] = [
     (4, 0), // the field, unfolded
     (0, 0),
@@ -526,7 +526,11 @@ fn compute_bars(t: &dyn Fn(f32) -> f32, n: usize, blend: f32, mode: u32) -> ([f3
         }
     };
 
-    (positions, bar_half)
+    // Held bars (blend = 1: the stills and the zoom) take the static width, whatever the mode and whatever the
+    // clock says, so the closing retraces the opening in width as well as in position. In between, the width
+    // eases with the positions.
+    let rest = bar_half_base * STATIC_BAR_WIDTH;
+    (positions, bar_half * (1.0 - blend) + rest * blend)
 }
 
 // ── Kaleidoscope modes — analytical N-fold coordinate folding ────────
@@ -556,5 +560,30 @@ fn compute_rotozoom(t: &dyn Fn(f32) -> f32, mode: u32) -> (f32, f32, u32) {
             10,
         ),
         _ => (0.0, 1.0, 0),
+    }
+}
+
+#[cfg(test)]
+mod held_tests {
+    use super::*;
+
+    /// While the bars are held (blend = 1: the stills and the zoom) the picture must not depend on the clock,
+    /// or the closing cannot retrace the opening. Positions AND width, in every bar mode.
+    #[test]
+    fn held_bars_ignore_the_clock() {
+        for mode in 0..5 {
+            let a = compute_bars(&|w| w * 1.0, 480, 1.0, mode);
+            let b = compute_bars(&|w| w * 977.3, 480, 1.0, mode);
+            assert_eq!(a, b, "mode {mode}");
+            assert_eq!(a, compute_bars(&|w| w * 3.1, 480, 1.0, 0), "mode {mode} differs from mode 0");
+        }
+    }
+
+    /// At blend = 0 the scene keeps its own width (the hold must not flatten the running scenes).
+    #[test]
+    fn running_wave_still_breathes() {
+        let a = compute_bars(&|_| 0.0, 480, 0.0, 0).1;
+        let b = compute_bars(&|_| std::f32::consts::FRAC_PI_2, 480, 0.0, 0).1;
+        assert!((a - b).abs() > 1.0);
     }
 }
