@@ -150,9 +150,13 @@ impl App {
 
         let (old_bar, old_rz) = SNAKE[old];
         let (new_bar, new_rz) = SNAKE[new];
-        // Bars <-> field: a crossfade between two different pictures; give it time
-        if (old_bar == FIELD_MODE) != (new_bar == FIELD_MODE) {
+        // Bars <-> field: a crossfade between two different pictures; give it time. Leaving the field the cycle
+        // jumps to the opposite scene (bar motion AND fold change at once), so the way out is slower.
+        if new_bar == FIELD_MODE {
             return 4.0;
+        }
+        if old_bar == FIELD_MODE {
+            return 6.0;
         }
         let old_fold = FOLD_COUNTS[old_rz as usize];
         let new_fold = FOLD_COUNTS[new_rz as usize];
@@ -209,7 +213,7 @@ impl Application for App {
         eprintln!("       \u{2500}\u{2500}\u{2500} still \u{2500}\u{2500}\u{2500}");
         let mut bars = v40_bars().width(Length::Fill).height(Length::Fill);
         // Command line: --windowed (do not start fullscreen), --no-crt (start with the CRT post-process off),
-        // --scene N (start the supercycle at scene N of NUM_COMBOS; 17 is the field scene).
+        // --scene N (start the supercycle at scene N of NUM_COMBOS; 9 is the field scene).
         let args: Vec<String> = std::env::args().collect();
         let windowed = args.iter().any(|a| a == "--windowed");
         let flags = if args.iter().any(|a| a == "--no-crt") { CRT_OFF } else { 0 };

@@ -38,11 +38,17 @@ const NUM_BARS: usize = 10;
 
 /// Bar modes 0..3 move the raster bars; mode 4 is the field scene (0.2.0), which has no bars.
 pub const FIELD_MODE: u32 = 4;
-/// Total combo states: the snake through the 4×4 bar grid, then the field scene.
+/// Total combo states: the 4×4 bar grid and the field scene.
 pub const NUM_COMBOS: usize = 17;
 
-/// Snake pattern: each step changes only ONE of (bar, rotozoom).
-/// Bars cycle forward on even rows, backward on odd rows.
+/// The supercycle's scenes, as (bar mode, rotozoom mode).
+///
+/// Each step changes only ONE of the two, except through the field. The first half snakes through the wave and
+/// plasma rows and ends on (plasma, no fold): the most chaotic motion, flat. The field stands there, at the
+/// half-way point, and the cycle leaves it for the exact opposite, (cascade, 10-fold): the most orderly motion,
+/// most mirrored. The second half snakes back through the cascade and bounce rows, pairing them column by
+/// column so every step is still one change, and ends on (cascade, no fold) as 0.1 did, so the closing mirrors
+/// the opening.
 pub const SNAKE: [(u32, u32); NUM_COMBOS] = [
     (0, 0),
     (0, 1),
@@ -52,17 +58,15 @@ pub const SNAKE: [(u32, u32); NUM_COMBOS] = [
     (1, 2),
     (1, 1),
     (1, 0),
-    (2, 0),
-    (2, 1),
-    (2, 2),
-    (2, 3),
+    (4, 0), // the field, unfolded
     (3, 3),
+    (2, 3),
+    (2, 2),
     (3, 2),
     (3, 1),
+    (2, 1),
+    (2, 0),
     (3, 0),
-    // 0.2.0: the field, unfolded. The snake ended on fold "none" and still does, so the closing
-    // (last scene -> still -> zoom out) stays the mirror of the opening.
-    (4, 0),
 ];
 
 // ── Natural constants (original mm-dream vocabulary) ────────────────
