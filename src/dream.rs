@@ -43,13 +43,11 @@ pub const NUM_COMBOS: usize = 17;
 
 /// The supercycle's scenes, as (bar mode, rotozoom mode).
 ///
-/// Each step changes only ONE of the two, except through the field. The first half snakes through the wave and
-/// plasma rows and ends on (plasma, no fold): the most chaotic motion, flat. The field stands there, at the
-/// half-way point, and the cycle leaves it for the exact opposite, (cascade, 10-fold): the most orderly motion,
-/// most mirrored. The second half snakes back through the cascade and bounce rows, pairing them column by
-/// column so every step is still one change, and ends on (cascade, no fold) as 0.1 did, so the closing mirrors
-/// the opening.
+/// Slot 0 is the field, unfolded: the cycle opens on it, straight out of the opening still. Then 0.1's snake
+/// through the 4×4 bar grid: each step changes only ONE of (bar, rotozoom); bars cycle forward on even rows,
+/// backward on odd rows. It ends on (cascade, no fold), so the closing still mirrors the opening.
 pub const SNAKE: [(u32, u32); NUM_COMBOS] = [
+    (4, 0), // the field, unfolded
     (0, 0),
     (0, 1),
     (0, 2),
@@ -58,14 +56,13 @@ pub const SNAKE: [(u32, u32); NUM_COMBOS] = [
     (1, 2),
     (1, 1),
     (1, 0),
-    (4, 0), // the field, unfolded
-    (3, 3),
-    (2, 3),
+    (2, 0),
+    (2, 1),
     (2, 2),
+    (2, 3),
+    (3, 3),
     (3, 2),
     (3, 1),
-    (2, 1),
-    (2, 0),
     (3, 0),
 ];
 

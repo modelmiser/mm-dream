@@ -143,6 +143,10 @@ impl App {
 
     /// Visual distance → transition duration (0.33s for smooth, up to 3.0s for jarring).
     fn transition_cost(&self, old: usize, new: usize) -> f32 {
+        // From the opening still into the field (slot 0): a crossfade between two pictures, not an unfreezing
+        if old == NUM_COMBOS && new < NUM_COMBOS && SNAKE[new].0 == FIELD_MODE {
+            return 4.0;
+        }
         // To/from static: 1 second
         if old == NUM_COMBOS || new == NUM_COMBOS {
             return 1.0;
@@ -150,13 +154,9 @@ impl App {
 
         let (old_bar, old_rz) = SNAKE[old];
         let (new_bar, new_rz) = SNAKE[new];
-        // Bars <-> field: a crossfade between two different pictures; give it time. Leaving the field the cycle
-        // jumps to the opposite scene (bar motion AND fold change at once), so the way out is slower.
-        if new_bar == FIELD_MODE {
-            return 4.0;
-        }
-        if old_bar == FIELD_MODE {
-            return 6.0;
+        // Bars <-> field: a crossfade between two different pictures; give it time (more if the fold changes too)
+        if (old_bar == FIELD_MODE) != (new_bar == FIELD_MODE) {
+            return if old_rz == new_rz { 4.0 } else { 6.0 };
         }
         let old_fold = FOLD_COUNTS[old_rz as usize];
         let new_fold = FOLD_COUNTS[new_rz as usize];
@@ -213,7 +213,7 @@ impl Application for App {
         eprintln!("       \u{2500}\u{2500}\u{2500} still \u{2500}\u{2500}\u{2500}");
         let mut bars = v40_bars().width(Length::Fill).height(Length::Fill);
         // Command line: --windowed (do not start fullscreen), --no-crt (start with the CRT post-process off),
-        // --scene N (start the supercycle at scene N of NUM_COMBOS; 9 is the field scene).
+        // --scene N (start the supercycle at scene N of NUM_COMBOS; 1 is the field scene).
         let args: Vec<String> = std::env::args().collect();
         let windowed = args.iter().any(|a| a == "--windowed");
         let flags = if args.iter().any(|a| a == "--no-crt") { CRT_OFF } else { 0 };
