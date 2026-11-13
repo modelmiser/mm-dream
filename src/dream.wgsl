@@ -222,22 +222,26 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let r2 = raw_dx * raw_dx + raw_dy * raw_dy;  // vignette uses screen-space radius
     let aspect = u.bounds_w / u.bounds_h;
 
-    // The barrel bends the coordinates the fold then mirrors, so its radius must be the TRUE (square-pixel) radius:
-    // with the per-axis radius above, the bend is elliptical on a non-square screen and the fold's sectors stop
-    // matching (0.1: up to 33 px at 4K). Scaled so the corners bend exactly as before.
+    // The barrel bends the coordinates before anything samples them, so its radius decides which symmetries survive.
+    //  - An UNFOLDED scene is built in per-axis screen units (the H and V bar passes): its mirrors, the corner-to-
+    //    corner one included, survive only if the bend uses the per-axis radius. That is what 0.1 did.
+    //  - A FOLDED scene is built in square pixels: its sectors match only if the bend uses the true radius
+    //    (0.1 used the per-axis radius there too: sectors off by up to 33 px at 4K).
+    // So each fold count gets the radius its scene is built in; a fold crossfade mixes two exact pictures.
+    // Both are scaled to bend the corners equally.
     let r2_true = (raw_dx * raw_dx * aspect * aspect + raw_dy * raw_dy) * 2.0 / (aspect * aspect + 1.0);
-    let inv_barrel = 1.0 + k * r2_true;
-    let ix = dx * inv_barrel;
-    let iy = dy * inv_barrel;
+    let b_curr = 1.0 + k * select(r2_true, r2, u.fold_count == 0u);
+    let b_prev = 1.0 + k * select(r2_true, r2, u.prev_fold_count == 0u);
 
     // Fold + zoom — sample both current and previous fold, crossfade
-    let sq = vec2(ix * aspect, iy);
+    let sq = vec2(dx * b_curr * aspect, dy * b_curr);
 
     let curr = sample_fold(sq, u.fold_count, u.fold_angle, u.fold_zoom, aspect, ica, isa);
 
     var color: vec3<f32>;
     if u.fold_blend < 1.0 {
-        let prev = sample_fold(sq, u.prev_fold_count, u.prev_fold_angle, u.fold_zoom, aspect, ica, isa);
+        let sq_prev = vec2(dx * b_prev * aspect, dy * b_prev);
+        let prev = sample_fold(sq_prev, u.prev_fold_count, u.prev_fold_angle, u.fold_zoom, aspect, ica, isa);
         color = mix(prev, curr, u.fold_blend);
     } else {
         color = curr;
