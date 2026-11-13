@@ -1,5 +1,5 @@
 use cosmic::app::{Core, Settings, Task};
-use cosmic::iced::{time, Length, Limits, Subscription};
+use cosmic::iced::{event, keyboard, time, window, Length, Limits, Subscription};
 use cosmic::iced_widget::shader;
 use cosmic::{executor, Application, ApplicationExt, Element};
 use std::time::Duration;
@@ -46,6 +46,40 @@ struct App {
     flux_sum: f32,
     flux_frames: u32,
     speed_factor: f32,
+    flags: u32,       // shader flags, see FIELD / CRT_OFF / FOLD_OFF
+    fullscreen: bool, // current window mode
+    fs_applied: bool, // the start-up fullscreen request has been sent
+}
+
+// Shader flags (0.2.0).
+const FIELD: u32 = 1; // the field source instead of the raster bars
+const CRT_OFF: u32 = 2; // no barrel, scanlines, grille or vignette: the picture reaches every edge
+const FOLD_OFF: u32 = 4; // no kaleidoscope fold
+/// The field starts as it was chosen: unmirrored, edge to edge. The bars start as in 0.1.
+const FIELD_DEFAULT: u32 = FIELD | CRT_OFF | FOLD_OFF;
+
+#[derive(Debug, Clone, Copy)]
+enum Key {
+    Source,     // s: bars <-> field
+    Crt,        // c: CRT post-process on/off
+    Mirrors,    // m: kaleidoscope fold on/off
+    Fullscreen, // f: fullscreen <-> window
+    Quit,       // q or Esc
+}
+
+fn on_event(e: cosmic::iced::Event, _status: event::Status, _id: window::Id) -> Option<Message> {
+    let cosmic::iced::Event::Keyboard(keyboard::Event::KeyPressed { key, repeat: false, .. }) = e else {
+        return None;
+    };
+    let k = match key.as_ref() {
+        keyboard::Key::Character("s") => Key::Source,
+        keyboard::Key::Character("c") => Key::Crt,
+        keyboard::Key::Character("m") => Key::Mirrors,
+        keyboard::Key::Character("f") => Key::Fullscreen,
+        keyboard::Key::Character("q") | keyboard::Key::Named(keyboard::key::Named::Escape) => Key::Quit,
+        _ => return None,
+    };
+    Some(Message::Key(k))
 }
 
 const BAR_NAMES: [&str; 4] = ["wave", "plasma", "bounce", "cascade"];
@@ -139,6 +173,7 @@ fn smoothstep(t: f32) -> f32 {
 #[derive(Debug, Clone)]
 enum Message {
     Tick,
+    Key(Key),
 }
 
 impl Application for App {
@@ -159,9 +194,11 @@ impl Application for App {
     fn init(mut core: Core, _flags: ()) -> (Self, Task<Message>) {
         core.set_header_title("mm-dream".into());
         core.window.content_container = false;
+        core.window.show_headerbar = false;
         eprintln!("mm-dream \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500} zoom in \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
         eprintln!("       \u{2500}\u{2500}\u{2500} still \u{2500}\u{2500}\u{2500}");
-        let bars = v40_bars(0.0).width(Length::Fill).height(Length::Fill);
+        let mut bars = v40_bars(0.0).width(Length::Fill).height(Length::Fill);
+        bars.set_flags(FIELD_DEFAULT);
         (
             App {
                 core,
@@ -178,6 +215,9 @@ impl Application for App {
                 flux_sum: 0.0,
                 flux_frames: 0,
                 speed_factor: 1.0,
+                flags: FIELD_DEFAULT,
+                fullscreen: true,
+                fs_applied: false,
             },
             Task::none(),
         )
@@ -185,6 +225,23 @@ impl Application for App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Key(k) => {
+                match k {
+                    Key::Source => self.flags = if self.flags & FIELD != 0 { 0 } else { FIELD_DEFAULT },
+                    Key::Crt => self.flags ^= CRT_OFF,
+                    Key::Mirrors => self.flags ^= FOLD_OFF,
+                    Key::Quit => return cosmic::iced::exit(),
+                    Key::Fullscreen => {
+                        self.fullscreen = !self.fullscreen;
+                        if let Some(id) = self.core().main_window_id() {
+                            let mode = if self.fullscreen { window::Mode::Fullscreen } else { window::Mode::Windowed };
+                            return window::set_mode(id, mode);
+                        }
+                    }
+                }
+                self.bars.set_flags(self.flags);
+                return Task::none();
+            }
             Message::Tick => {
                 // Measure flux at full speed (before limiter) for accurate chaos reading.
                 // Only accumulate during steady state — skip transitions which spike
@@ -213,7 +270,9 @@ impl Application for App {
                 } else {
                     self.speed_factor = self.speed_factor * 0.95 + target_factor * 0.05;
                 }
-                self.elapsed = (self.elapsed + DT * self.speed_factor) % 10_000.0;
+                // The flux limiter measures the bars; the field has no bars and runs at its own fixed rates.
+                let speed = if self.flags & FIELD != 0 { 1.0 } else { self.speed_factor };
+                self.elapsed = (self.elapsed + DT * speed) % 10_000.0;
 
                 // Zoom state machine — raw progress, eased before sending to GPU
                 match self.zoom_state {
@@ -288,6 +347,15 @@ impl Application for App {
         // Ease-out in both directions: fast at far end, slow near screen
         let eased_zoom = smoothstep(self.zoom_t);
         self.bars.set_zoom_t(eased_zoom);
+        if !self.fs_applied {
+            if let Some(id) = self.core().main_window_id() {
+                self.fs_applied = true;
+                return Task::batch([
+                    self.set_window_title("mm-dream".into(), id),
+                    window::set_mode(id, window::Mode::Fullscreen),
+                ]);
+            }
+        }
         // Set window title once (task switcher / Wayland xdg_toplevel)
         if self.flux_frames <= 1 {
             if let Some(id) = self.core().main_window_id() {
@@ -305,6 +373,9 @@ impl Application for App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(Duration::from_millis(16)).map(|_| Message::Tick)
+        Subscription::batch([
+            time::every(Duration::from_millis(16)).map(|_| Message::Tick),
+            event::listen_with(on_event),
+        ])
     }
 }

@@ -172,6 +172,7 @@ pub fn v40_bars(time: f32) -> V40Bars {
         height: Length::Fill,
         prev_positions: Cell::new([0.0; 10]),
         flux: Cell::new(0.0),
+        flags: 0,
     }
 }
 
@@ -188,6 +189,8 @@ pub struct V40Bars {
     // Flux tracking — interior mutability because draw() takes &self
     prev_positions: Cell<[f32; 10]>,
     flux: Cell<f32>,
+    /// Shader flags: bit 0 field source, bit 1 CRT off, bit 2 fold off.
+    flags: u32,
 }
 
 fn smoothstep_f(t: f32) -> f32 {
@@ -200,6 +203,10 @@ impl V40Bars {
     /// Normalized: bar movement / bar_width × fold_count.
     pub fn flux(&self) -> f32 {
         self.flux.get()
+    }
+
+    pub fn set_flags(&mut self, flags: u32) {
+        self.flags = flags;
     }
 
     pub fn set_time(&mut self, t: f32) {
@@ -344,7 +351,7 @@ impl<Message> shader::Program<Message> for V40Bars {
                 fold_blend,
                 prev_fold_angle,
                 zoom_t: self.zoom_t,
-                _pad: 0.0,
+                flags: self.flags as f32,
             },
         }
     }

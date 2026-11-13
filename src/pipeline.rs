@@ -28,7 +28,7 @@ pub struct Uniforms {
     pub fold_blend: f32,      // 0 = prev fold, 1 = current fold
     pub prev_fold_angle: f32, // prev mode's axis angle
     pub zoom_t: f32,          // 0 = fully zoomed (far), 1 = settled at screen
-    pub _pad: f32,
+    pub flags: f32, // bit 0: field source; bit 1: CRT off; bit 2: fold off
 }
 
 // Must be 272 bytes (17 × 16) to match WGSL struct layout.

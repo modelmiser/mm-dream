@@ -33,7 +33,7 @@ struct Uniforms {
     fold_blend: f32,
     prev_fold_angle: f32,
     zoom_t: f32,
-    _pad0: f32,
+    flags: f32,     // bit 0: field source; bit 1: CRT post-process off; bit 2: fold off
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -114,6 +114,38 @@ fn sample_bars(x_norm: f32, y_scan: f32, half: f32) -> vec3<f32> {
     return vec3(mix_r * inv * max_i, mix_g * inv * max_i, mix_b * inv * max_i);
 }
 
+// ── Field source (0.2.0) ─────────────────────────────────────────────
+// One rotating, breathing lattice over a slow three-term plasma, through a three-phase sine palette shaded by the
+// lattice. The float form of a 16-bit integer shader that runs on an FPGA tile array (one sine table of 128 steps;
+// every motion a frame count times its own rate). The rates below are those integers; the unit of length is 1/120
+// of the half-height, so the pattern is the same size at every resolution.
+const FIELD_UNITS: f32 = 120.0;
+const FIELD_FPS: f32 = 60.0;
+
+fn fsin(q: f32) -> f32 {
+    return 0.5 + 0.5 * sin(q * TAU / 128.0);
+}
+
+fn sample_field(p: vec2<f32>) -> vec3<f32> {
+    let t = u.time * FIELD_FPS;
+    let dx = p.x * FIELD_UNITS;
+    let dy = p.y * FIELD_UNITS;
+    // plasma: horizontal, vertical and radial terms at rates 128, 80, 104 (per 512 frames, one table step)
+    let rr = (dx * dx + dy * dy) / 64.0;
+    let pl = (fsin(dx + t * 0.25) + fsin(dy + t * 0.15625) + fsin(rr - t * 0.203125)) * 63.75;
+    // lattice: rotation at rate 29, zoom breathing at rate 41 (turns per 65536 frames)
+    let ang = t * (29.0 / 65536.0) * TAU;
+    let zoom = (896.0 + 510.0 + 510.0 * sin(t * (41.0 / 65536.0) * TAU)) * (2040.0 / 16384.0);
+    let c = zoom * cos(ang);
+    let s = zoom * sin(ang);
+    let lu = (dx * c - dy * s) / 128.0;
+    let lv = (dx * s + dy * c) / 128.0;
+    let lat = (fsin(lu * 0.25) + fsin(lv * 0.25)) * 127.5;
+    let shade = (128.0 + lat * 0.5) / 256.0;
+    let i = pl + lat;
+    return vec3(fsin(i), fsin(i + 43.0), fsin(i + 85.0)) * shade;
+}
+
 // Apply kaleidoscope fold to square-space coordinates
 fn fold_coords(sx: f32, sy: f32, fc: u32, angle: f32) -> vec2<f32> {
     if fc == 0u {
@@ -142,7 +174,13 @@ fn fold_coords(sx: f32, sy: f32, fc: u32, angle: f32) -> vec2<f32> {
 // Sample bars through fold + counter-rotation pipeline. Returns screen-blended H+V color.
 fn sample_fold(sq: vec2<f32>, fc: u32, angle: f32, zoom: f32,
                aspect: f32, ica: f32, isa: f32) -> vec3<f32> {
-    let f = fold_coords(sq.x, sq.y, fc, angle);
+    let fl = u32(u.flags);
+    let f = fold_coords(sq.x, sq.y, select(fc, 0u, (fl & 4u) != 0u), angle);
+    if (fl & 1u) != 0u {
+        // the field is sampled once, in square space (no aspect squeeze), with the intro rotation
+        let q = vec2(f.x * zoom, f.y * zoom);
+        return sample_field(vec2(q.x * ica - q.y * isa, q.x * isa + q.y * ica));
+    }
     let s = vec2(f.x * zoom / aspect, f.y * zoom);
     let sh = vec2(s.x * ica - s.y * isa, s.x * isa + s.y * ica);
     let sv = vec2(s.x * ica + s.y * isa, -s.x * isa + s.y * ica);
@@ -157,7 +195,8 @@ fn sample_fold(sq: vec2<f32>, fc: u32, angle: f32, zoom: f32,
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let k = u.k_crt;
+    let crt = (u32(u.flags) & 2u) == 0u;
+    let k = select(0.0, u.k_crt, crt);
     let raw_dx = in.uv.x * 2.0 - 1.0;
     let raw_dy = in.uv.y * 2.0 - 1.0;
 
@@ -189,6 +228,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         color = mix(prev, curr, u.fold_blend);
     } else {
         color = curr;
+    }
+
+    if !crt {
+        return vec4(clamp(color, vec3(0.0), vec3(1.0)), 1.0);
     }
 
     // ── CRT effects (display space, DPI-aware) ──
